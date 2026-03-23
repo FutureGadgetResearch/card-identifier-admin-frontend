@@ -1,0 +1,51 @@
+# Cloud Run Job: sync-card-phashes
+# Exports card_phashes from BigQuery → GCS → card-identifier-data repo.
+#
+# Deploy:
+#   gcloud run jobs deploy sync-card-phashes \
+#     --project future-gadget-labs-483502 \
+#     --region us-central1 \
+#     --source . \
+#     --service-account card-identifier-backend@future-gadget-labs-483502.iam.gserviceaccount.com
+#
+# Schedule (Cloud Scheduler):
+#   gcloud scheduler jobs create http sync-card-phashes-schedule \
+#     --project future-gadget-labs-483502 \
+#     --location us-central1 \
+#     --schedule "0 * * * *" \
+#     --uri "https://us-central1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/future-gadget-labs-483502/jobs/sync-card-phashes:run" \
+#     --oauth-service-account-email card-identifier-backend@future-gadget-labs-483502.iam.gserviceaccount.com
+
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: sync-card-phashes
+  labels:
+    app: card-identifier
+spec:
+  template:
+    spec:
+      taskCount: 1
+      template:
+        spec:
+          maxRetries: 3
+          timeoutSeconds: 300
+          serviceAccountName: card-identifier-backend@future-gadget-labs-483502.iam.gserviceaccount.com
+          containers:
+            - image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+              command: ["/bin/bash", "/app/sync.sh"]
+              env:
+                - name: GCS_DATA_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: gcs-data-bucket
+                      key: latest
+                - name: GITHUB_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: github-sync-token
+                      key: latest
+              resources:
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
