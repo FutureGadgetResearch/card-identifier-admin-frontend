@@ -10,7 +10,7 @@ Tell Claude: *"work on the next TODO item"* and it will pick the top unchecked i
 
 - [x] **Switch p-hash table key to TCGPlayer product ID** — BQ table recreated with `tcgplayer_product_id` (INT64, REQUIRED). Backend model, bq client, and handlers updated. Frontend CRUD and dashboard updated. No data migration needed (table was empty).
 
-- [ ] **Local CLI: bulk p-hash ingestion from stock photo folder** — Go script in `card-identifier-backend` that walks a local `tcg_stock_photos/` folder, treats each filename (minus extension) as a `tcgplayer_product_id`, computes a 64-bit pHash, and upserts into `card_phashes` with `source='tcgplayer'`. Upsert logic: overwrite the existing row if one already exists for `(tcgplayer_product_id, source='tcgplayer')`, otherwise insert. Depends on the TCGPlayer product ID migration above being done first.
+- [x] **Ingest TCGPlayer stock images via UI** — Replaces the local CLI approach. Backend `POST /cards/phashes/ingest` accepts `{ tcgplayer_product_ids: [int64] }`, fetches each stock image from TCGPlayer's public CDN, computes a 64-bit DCT pHash via `goimagehash`, and upserts into `card_phashes` with `source='tcgplayer'`. Frontend "Ingest" button on the Cards page opens a modal with a textarea for product IDs; shows per-ID success/error results.
 
 ---
 

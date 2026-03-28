@@ -5,6 +5,9 @@
     <button class="btn btn-outline-secondary btn-sm" id="btn-sync" onclick="triggerSync()">
       <i class="bi bi-arrow-repeat me-1"></i>Sync
     </button>
+    <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#ingestModal" onclick="openIngestModal()">
+      <i class="bi bi-cloud-download me-1"></i>Ingest
+    </button>
     <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#cardModal" onclick="openCreateModal()">
       <i class="bi bi-plus-lg me-1"></i>New Entry
     </button>
@@ -88,6 +91,58 @@
       <div class="modal-footer border-0 pt-0">
         <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-primary btn-sm" id="modal-save-btn" onclick="saveItem()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Ingest modal -->
+<div class="modal fade" id="ingestModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title">
+          <i class="bi bi-cloud-download me-2 text-primary"></i>Ingest TCGPlayer Stock Images
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">
+          Enter TCGPlayer product IDs (one per line). The backend will fetch each stock image
+          from the TCGPlayer CDN, compute a pHash, and upsert into the table with
+          <code>source='tcgplayer'</code>.
+        </p>
+        <div id="ingest-input-section">
+          <label class="form-label small fw-medium" for="ingest-ids">Product IDs</label>
+          <textarea class="form-control font-monospace" id="ingest-ids" rows="6"
+                    placeholder="603943&#10;603944&#10;603945"></textarea>
+          <div id="ingest-error" class="alert alert-danger py-2 small mt-2 d-none"></div>
+        </div>
+        <!-- Results (shown after submission) -->
+        <div id="ingest-results" class="d-none">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <span class="small fw-medium">Results</span>
+            <span id="ingest-summary" class="small text-muted"></span>
+          </div>
+          <div class="table-responsive" style="max-height:300px;overflow-y:auto">
+            <table class="table table-sm align-middle mb-0 small">
+              <thead class="table-light sticky-top">
+                <tr>
+                  <th>Product ID</th>
+                  <th>pHash</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="ingest-results-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary btn-sm" id="ingest-submit-btn" onclick="submitIngest()">
+          <i class="bi bi-cloud-download me-1"></i>Fetch &amp; Hash
+        </button>
       </div>
     </div>
   </div>
@@ -277,6 +332,81 @@
     const d = document.createElement('div');
     d.appendChild(document.createTextNode(String(str)));
     return d.innerHTML;
+  }
+
+  // ── Ingest ────────────────────────────────────────────────────────────────
+  const ingestModal = new bootstrap.Modal(document.getElementById('ingestModal'));
+
+  function openIngestModal() {
+    document.getElementById('ingest-ids').value = '';
+    document.getElementById('ingest-error').classList.add('d-none');
+    document.getElementById('ingest-results').classList.add('d-none');
+    document.getElementById('ingest-input-section').classList.remove('d-none');
+    document.getElementById('ingest-submit-btn').classList.remove('d-none');
+  }
+
+  async function submitIngest() {
+    const raw = document.getElementById('ingest-ids').value;
+    const ids = raw.split('\n')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(s => parseInt(s, 10))
+      .filter(n => !isNaN(n) && n > 0);
+
+    const errEl = document.getElementById('ingest-error');
+    errEl.classList.add('d-none');
+
+    if (ids.length === 0) {
+      errEl.textContent = 'Enter at least one valid product ID.';
+      errEl.classList.remove('d-none');
+      return;
+    }
+
+    const btn = document.getElementById('ingest-submit-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Fetching…';
+
+    try {
+      const { results } = await api('POST', `${RESOURCE_PATH}/ingest`, {
+        tcgplayer_product_ids: ids,
+      });
+
+      const ok  = results.filter(r => r.status === 'ok').length;
+      const err = results.filter(r => r.status === 'error').length;
+      document.getElementById('ingest-summary').textContent =
+        `${ok} succeeded, ${err} failed`;
+
+      const tbody = document.getElementById('ingest-results-tbody');
+      tbody.innerHTML = results.map(r => {
+        if (r.status === 'ok') {
+          return `<tr>
+            <td class="font-monospace">${escHtml(String(r.tcgplayer_product_id))}</td>
+            <td class="font-monospace text-muted">${escHtml(r.phash)}</td>
+            <td><span class="badge bg-success">ok</span></td>
+          </tr>`;
+        }
+        return `<tr>
+          <td class="font-monospace">${escHtml(String(r.tcgplayer_product_id))}</td>
+          <td class="text-muted">—</td>
+          <td>
+            <span class="badge bg-danger">error</span>
+            <span class="text-muted small ms-1">${escHtml(r.message)}</span>
+          </td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('ingest-input-section').classList.add('d-none');
+      document.getElementById('ingest-results').classList.remove('d-none');
+      btn.classList.add('d-none');
+
+      if (ok > 0) await loadItems();
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.classList.remove('d-none');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-cloud-download me-1"></i>Fetch &amp; Hash';
+    }
   }
 </script>
 {{ end }}
