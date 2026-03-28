@@ -1,0 +1,281 @@
+{{ define "main" }}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h2 class="h5 mb-0 fw-semibold">{{ .Title }}</h2>
+  <button class="btn btn-outline-secondary btn-sm" id="btn-refresh" onclick="initDashboard()">
+    <i class="bi bi-arrow-repeat me-1"></i>Refresh
+  </button>
+</div>
+
+<!-- Auth guard -->
+<div id="auth-guard" class="alert alert-warning d-none">
+  <i class="bi bi-lock me-1"></i>You must be <a href="{{ "" | relURL }}">signed in</a> to view the dashboard.
+</div>
+
+<!-- Loading -->
+<div id="loading" class="text-center py-5">
+  <div class="spinner-border text-primary" role="status"></div>
+  <p class="text-muted mt-2 small">Loading phashes &amp; catalog…</p>
+</div>
+
+<!-- Stats row -->
+<div class="row g-3 mb-4 d-none" id="stats-row">
+  <div class="col-6 col-lg-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Total pHashes</div>
+        <div class="h4 mb-0 fw-bold" id="stat-total">—</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Catalog Match Rate</div>
+        <div class="h4 mb-0 fw-bold" id="stat-match-rate">—</div>
+        <div class="text-muted small" id="stat-match-detail"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-2">By Source</div>
+        <div id="stat-sources" class="d-flex flex-wrap gap-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Filter bar -->
+<div class="d-flex gap-2 mb-3 d-none" id="filter-row">
+  <input type="search" class="form-control form-control-sm" id="search-input"
+         placeholder="Filter by name, product ID, set…"
+         oninput="applyFilters()">
+  <select class="form-select form-select-sm" style="max-width:160px" id="source-filter" onchange="applyFilters()">
+    <option value="">All sources</option>
+    <option value="tcgplayer">TCGPlayer</option>
+    <option value="my_scan">My Scan</option>
+    <option value="penny_sleeve">Penny Sleeve</option>
+    <option value="top_loader">Top Loader</option>
+  </select>
+  <select class="form-select form-select-sm" style="max-width:140px" id="match-filter" onchange="applyFilters()">
+    <option value="">All rows</option>
+    <option value="matched">Matched only</option>
+    <option value="unmatched">Unmatched only</option>
+  </select>
+</div>
+
+<!-- Table -->
+<div class="card shadow-sm border-0 d-none" id="table-card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0 small">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Product ID</th>
+            <th>Name</th>
+            <th>Set</th>
+            <th>Rarity</th>
+            <th>pHash</th>
+            <th>Source</th>
+            <th class="text-end pe-3">Catalog</th>
+          </tr>
+        </thead>
+        <tbody id="dashboard-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer text-muted small py-2 d-none" id="table-footer"></div>
+</div>
+
+<!-- Empty state -->
+<div id="empty-state" class="text-center py-5 d-none">
+  <i class="bi bi-inbox fs-1 text-muted"></i>
+  <p class="text-muted mt-2">No pHash records found.</p>
+</div>
+{{ end }}
+
+{{ define "page-scripts" }}
+<script>
+  // ── Constants ──────────────────────────────────────────────────────────────
+  const PHASH_PATH = '/cards/phashes';
+
+  const CATALOG_REPO     = (window.CATALOG_CONFIG || {}).repo || '';
+  const CATALOG_PATH_KEY = (window.CATALOG_CONFIG || {}).path || '';
+
+  const SOURCE_LABELS = {
+    tcgplayer:    'TCGPlayer',
+    my_scan:      'My Scan',
+    penny_sleeve: 'Penny Sleeve',
+    top_loader:   'Top Loader',
+  };
+
+  const SOURCE_COLORS = {
+    tcgplayer:    'primary',
+    my_scan:      'success',
+    penny_sleeve: 'warning',
+    top_loader:   'info',
+  };
+
+  const RARITY_LABELS = {
+    alt_art:              'Alt Art',
+    epic:                 'Epic',
+    overnumber:           'Overnumber',
+    signature_overnumber: 'Sig. Overnumber',
+  };
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let allRows  = [];
+  let filtered = [];
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+  firebase.auth().onAuthStateChanged(async user => {
+    if (!user) {
+      document.getElementById('loading').classList.add('d-none');
+      document.getElementById('auth-guard').classList.remove('d-none');
+      return;
+    }
+    await initDashboard();
+  });
+
+  async function initDashboard() {
+    setLoading(true);
+    try {
+      const [phashes, catalog] = await Promise.all([
+        api('GET', PHASH_PATH),
+        fetchCatalog(),
+      ]);
+      allRows = buildRows(phashes || [], catalog);
+      renderStats(allRows);
+      filtered = allRows;
+      renderTable(filtered);
+      ['stats-row', 'filter-row', 'table-card'].forEach(id =>
+        document.getElementById(id).classList.remove('d-none'));
+      if (allRows.length === 0)
+        document.getElementById('empty-state').classList.remove('d-none');
+    } catch (e) {
+      showToast('Failed to load dashboard: ' + e.message, 'danger');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Catalog loading ────────────────────────────────────────────────────────
+  // Fetches external catalog JSON (different repo from DATA_CONFIG).
+  // Returns an empty array on any failure so the dashboard degrades gracefully.
+  async function fetchCatalog() {
+    if (!CATALOG_REPO || !CATALOG_PATH_KEY) return [];
+    const url = `https://raw.githubusercontent.com/${CATALOG_REPO}/main/${CATALOG_PATH_KEY}?t=${Date.now()}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { console.warn('[dashboard] catalog fetch returned', res.status); return []; }
+      return await res.json();
+    } catch (e) {
+      console.warn('[dashboard] catalog fetch threw:', e);
+      return [];
+    }
+  }
+
+  // ── Data join ─────────────────────────────────────────────────────────────
+  // Joins phash rows to catalog entries on tcgplayer_product_id = tcgplayer_id.
+  function buildRows(phashes, catalog) {
+    const lookup = new Map();
+    for (const entry of catalog) lookup.set(String(entry.tcgplayer_id), entry);
+    return phashes.map(item => ({
+      ...item,
+      meta: lookup.get(String(item.tcgplayer_product_id)) || null,
+    }));
+  }
+
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  function renderStats(rows) {
+    document.getElementById('stat-total').textContent = rows.length.toLocaleString();
+
+    const matched = rows.filter(r => r.meta != null);
+    const pct = rows.length > 0 ? Math.round((matched.length / rows.length) * 100) : 0;
+    document.getElementById('stat-match-rate').textContent = pct + '%';
+    document.getElementById('stat-match-detail').textContent =
+      `${matched.length} of ${rows.length} matched`;
+
+    const counts = {};
+    for (const r of rows) counts[r.source] = (counts[r.source] || 0) + 1;
+    document.getElementById('stat-sources').innerHTML = Object.entries(counts)
+      .sort(([,a],[,b]) => b - a)
+      .map(([src, n]) => {
+        const color = SOURCE_COLORS[src] || 'secondary';
+        return `<span class="badge bg-${color}-subtle text-${color}-emphasis border border-${color}-subtle">
+          ${escHtml(SOURCE_LABELS[src] || src)} <strong>${n}</strong>
+        </span>`;
+      }).join('');
+  }
+
+  // ── Table ──────────────────────────────────────────────────────────────────
+  function renderTable(rows) {
+    const tbody = document.getElementById('dashboard-tbody');
+
+    if (rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">No rows match the current filter.</td></tr>`;
+      document.getElementById('table-footer').classList.add('d-none');
+      return;
+    }
+
+    tbody.innerHTML = rows.map(row => {
+      const { meta } = row;
+      const srcColor = SOURCE_COLORS[row.source] || 'secondary';
+      const catalogBadge = meta
+        ? `<span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">matched</span>`
+        : `<span class="badge bg-light text-muted border">no match</span>`;
+
+      return `<tr>
+        <td class="ps-3 font-monospace fw-medium">${escHtml(String(row.tcgplayer_product_id))}</td>
+        <td>${meta ? escHtml(meta.name) : '<span class="text-muted">—</span>'}</td>
+        <td>${meta ? escHtml(meta.set_code.toUpperCase()) : '<span class="text-muted">—</span>'}</td>
+        <td>${meta ? escHtml(RARITY_LABELS[meta.rarity] || meta.rarity) : '<span class="text-muted">—</span>'}</td>
+        <td class="font-monospace text-muted">${escHtml(row.phash || '—')}</td>
+        <td><span class="badge bg-${srcColor}">${escHtml(SOURCE_LABELS[row.source] || row.source)}</span></td>
+        <td class="text-end pe-3">${catalogBadge}</td>
+      </tr>`;
+    }).join('');
+
+    const footer = document.getElementById('table-footer');
+    footer.textContent = `Showing ${rows.length} of ${allRows.length} rows`;
+    footer.classList.remove('d-none');
+  }
+
+  // ── Filters ────────────────────────────────────────────────────────────────
+  function applyFilters() {
+    const q     = document.getElementById('search-input').value.trim().toLowerCase();
+    const src   = document.getElementById('source-filter').value;
+    const match = document.getElementById('match-filter').value;
+
+    filtered = allRows.filter(row => {
+      if (src && row.source !== src) return false;
+      if (match === 'matched'   && !row.meta) return false;
+      if (match === 'unmatched' &&  row.meta) return false;
+      if (q) {
+        const haystack = [
+          String(row.tcgplayer_product_id),
+          row.meta?.name     || '',
+          row.meta?.set_code || '',
+        ].join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+
+    renderTable(filtered);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function setLoading(on) {
+    document.getElementById('loading').classList.toggle('d-none', !on);
+    document.getElementById('btn-refresh').disabled = on;
+  }
+
+  function escHtml(str) {
+    const d = document.createElement('div');
+    d.appendChild(document.createTextNode(String(str)));
+    return d.innerHTML;
+  }
+</script>
+{{ end }}

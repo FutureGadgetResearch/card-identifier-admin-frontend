@@ -25,4 +25,10 @@
     gcsBucket:      "{{ .Site.Params.gcs.data.bucket }}",
     githubDataRepo: "{{ .Site.Params.github.data.repo }}",
   };
+  // Catalog config — external repo used to enrich pHash data with card metadata.
+  // Populated from HUGO_PARAMS_CATALOG_REPO / HUGO_PARAMS_CATALOG_PATH env vars.
+  window.CATALOG_CONFIG = {
+    repo: "{{ .Site.Params.catalog.repo }}",
+    path: "{{ .Site.Params.catalog.path }}",
+  };
 </script>

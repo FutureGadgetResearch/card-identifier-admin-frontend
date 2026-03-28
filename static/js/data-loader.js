@@ -1,3 +1,11 @@
+// Fetches JSON from an arbitrary URL with no fallback logic.
+// Use this when loading from an external repo (e.g. a catalog in a different org).
+async function loadJsonFromUrl(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Fetch failed for ${url}: ${res.status}`);
+  return res.json();
+}
+
 // Fetches a JSON file: tries GitHub raw first, falls back to GCS.
 // Requires window.DATA_CONFIG = { gcsBucket, githubDataRepo }
 async function loadJsonData(filename) {

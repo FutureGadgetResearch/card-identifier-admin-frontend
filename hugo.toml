@@ -31,6 +31,12 @@ theme = "admin"
   [params.github.data]
     repo = ""
 
+  # Catalog source — external repo containing card metadata for dashboard enrichment.
+  # Maps to HUGO_PARAMS_CATALOG_REPO and HUGO_PARAMS_CATALOG_PATH.
+  [params.catalog]
+    repo = ""
+    path = ""
+
 [markup]
   [markup.goldmark]
     [markup.goldmark.renderer]

@@ -23,9 +23,11 @@ This is a **template** for Hugo-based admin frontends following the BigQuery / C
 | `static/js/firebase-init.js` | Firebase app init, `authSignOut()`, `isEmailAllowed()`, auth state listener |
 | `static/js/api.js` | Authenticated `api(method, path, body)` helper + `qs()` query builder |
 | `static/js/app.js` | Global `showToast()` utility |
-| `static/js/data-loader.js` | `loadJsonData(filename)` — GitHub-first, GCS-fallback data fetching |
+| `static/js/data-loader.js` | `loadJsonData(filename)` (GitHub→GCS fallback) + `loadJsonFromUrl(url)` (bare fetch) |
 | `static/css/app.css` | Minimal style overrides on top of Bootstrap 5 |
 | `content/items/_index.md` | Example section — copy to add new sections |
+| `content/dashboard/_index.md` | Dashboard section — read-only enriched view of pHash data |
+| `themes/admin/layouts/dashboard/list.html` | Dashboard template — see "Dashboard" section below |
 | `.env.example` | Template for all environment variables |
 
 ## Auth Flow
@@ -36,6 +38,44 @@ This is a **template** for Hugo-based admin frontends following the BigQuery / C
 4. The backend validates the token via the Firebase Admin SDK before processing any write operations.
 5. Access is further restricted to a whitelist of allowed emails (`ALLOWED_EMAILS`), enforced on both frontend and backend.
 
+## Dashboard
+
+The dashboard (`/dashboard/`) is a **read-only enriched view** of whatever is currently in the database, loaded live from the backend API.
+
+### Data join
+
+pHash rows from the backend are joined client-side to a card metadata catalog:
+
+```
+GET /cards/phashes  (backend API, authenticated)
+        ↓ join on tcgplayer_product_id = tcgplayer_id
+CATALOG_REPO/CATALOG_PATH  (external GitHub Raw, public)
+        ↓
+Enriched table: Product ID | Name | Set | Rarity | pHash | Source | Match status
+```
+
+- **Join key:** `tcgplayer_product_id` (phash row, INT64) = `tcgplayer_id` (catalog entry, cast to string)
+- **No catalog match:** row still renders with product ID, pHash, source; catalog columns show "—" and a "no match" badge.
+- **Catalog fetch failure:** if the catalog URL is unreachable the dashboard still renders with all phash data; catalog columns just show "—".
+
+### Catalog config
+
+The catalog repo/path is configured via env vars and injected at build time as `window.CATALOG_CONFIG`:
+
+| Env var | `hugo.toml` key | Default |
+|---------|-----------------|---------|
+| `HUGO_PARAMS_CATALOG_REPO` | `params.catalog.repo` | `""` |
+| `HUGO_PARAMS_CATALOG_PATH` | `params.catalog.path` | `""` |
+
+Current catalog: `FutureGadgetCollections/collection-market-tracker-data` → `data/single-cards.json` (Riftbound cards). Add additional catalogs as needed when other game data is available.
+
+### Stats
+
+The summary row shows:
+- **Total pHashes** — raw row count from the backend
+- **Catalog Match Rate** — % of rows matched to a catalog entry
+- **By Source** — count per source value
+
 ## Development Notes
 
 - Hugo config lives in `hugo.toml`
@@ -44,3 +84,4 @@ This is a **template** for Hugo-based admin frontends following the BigQuery / C
 - The `split .Site.Params.allowed.emails ","` pattern in `head.html` converts the comma-separated email string to a JS array
 - To add a new CRUD section: create `content/<section>/_index.md`, add a nav link in `navbar.html`, and optionally add `themes/admin/layouts/<section>/list.html`
 - The default `list.html` provides a working CRUD template — update `RESOURCE_PATH` to your backend endpoint
+- `loadJsonFromUrl(url)` in `data-loader.js` is available for fetching catalog or other external JSON without the GCS fallback logic
